@@ -1,5 +1,6 @@
 import io
 import picamera
+from picamera.array import PiRGBArray
 import cv2
 import numpy
 import time
@@ -13,8 +14,6 @@ FACE_DETECTION_STATUS_PIN = 18
 GPIO.setmode(GPIO.BCM)
 GPIO.setwarnings(False)
 GPIO.setup(FACE_DETECTION_STATUS_PIN, GPIO.OUT)
-
-
 
 ### Setup of servo controls via arduino board ###
 
@@ -31,18 +30,14 @@ except Exception as e:
   print e
   sys.exit(0)
 
-
-
 def create_video_stream():
   camera = picamera.PiCamera()
+  camera.framerate = 30
   camera.resolution = (320, 240)
-  camera.framerate = 20
   camera.rotation = 180 # flip picture as camera is mounted upside-down
-
-  v_stream = picamera.PiCameraCircularIO(camera, size=17000000)
-  camera.start_recording(v_stream, format='h264', quality=30) # [0:high , 40:low]
-  time.sleep(2) # warmup
-  return camera
+  rawCapture = PiRGBArray(camera, size=(320, 240))
+  time.sleep(0.1) # warmup
+  return (camera, rawCapture)
 
 def extract_area_size(face):
   x, y, w, h = face
@@ -95,11 +90,9 @@ def get_compensation_angle(face):
 
   return (compensation_angle_x, compensation_angle_y)
 
-
-
 ### Setup of camera and pan-tilt ###
 
-camera = create_video_stream()
+camera, rawCapture = create_video_stream()
 camera_center = map(lambda x: x/2, camera.resolution) # from camera resolution
 
 # Face detection Haar cascade file
@@ -111,19 +104,17 @@ angle_y = 90
 servo_x.write(angle_x)
 servo_y.write(angle_y)
 
-while True:
+for frame in camera.capture_continuous(rawCapture, format="bgr", use_video_port=True):
 
   try:
 
-    # Create a memory stream to avoid photos needing to be saved in a file
-    p_stream = io.BytesIO()
-    camera.capture(p_stream, format='jpeg', use_video_port=True, thumbnail=None)
-
-    buff = numpy.fromstring(p_stream.getvalue(), dtype=numpy.uint8)
-    image = cv2.imdecode(buff, 1)
+    image = frame.array
 
     # Convert to grayscale
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+    # clear the stream in preparation for the next frame
+    rawCapture.truncate(0)
 
     # Look for faces in the image
     faces = face_cascade.detectMultiScale(gray, 1.5, 2)
