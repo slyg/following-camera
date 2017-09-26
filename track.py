@@ -1,43 +1,15 @@
-import io
-import picamera
-from picamera.array import PiRGBArray
 import cv2
-import numpy
-import time
-import sys
 from nanpy import (ArduinoApi, SerialManager, Servo)
+from pivideo import VideoStream
 import RPi.GPIO as GPIO
-
-### Setup of GPIO pin ###
+import signal
+import sys
+import time
 
 FACE_DETECTION_STATUS_PIN = 18
-GPIO.setmode(GPIO.BCM)
-GPIO.setwarnings(False)
-GPIO.setup(FACE_DETECTION_STATUS_PIN, GPIO.OUT)
-
-### Setup of servo controls via arduino board ###
-
 SERVO_X_ARDUINO_PIN = 8
 SERVO_Y_ARDUINO_PIN = 9
-
-try:
-  connection = SerialManager()
-  ArduinoApi(connection=connection)
-  servo_x = Servo(SERVO_X_ARDUINO_PIN)
-  servo_y = Servo(SERVO_Y_ARDUINO_PIN)
-
-except Exception as e:
-  print e
-  sys.exit(0)
-
-def create_video_stream():
-  camera = picamera.PiCamera()
-  camera.framerate = 30
-  camera.resolution = (320, 240)
-  camera.rotation = 180 # flip picture as camera is mounted upside-down
-  rawCapture = PiRGBArray(camera, size=(320, 240))
-  time.sleep(0.1) # warmup
-  return (camera, rawCapture)
+CAMERA_RESOLUTION = (320, 240)
 
 def extract_area_size(face):
   x, y, w, h = face
@@ -55,7 +27,7 @@ def get_biggest_face(faces):
   _, biggest_face = biggest_face_with_area
   return biggest_face
 
-def get_compensation_angle(face):
+def get_compensation_angle(face, camera_center, resolution):
 
   x, y, w, h = face
 
@@ -65,10 +37,9 @@ def get_compensation_angle(face):
 
   # Camera parameters and mappings
   x0, y0 = camera_center
+  cam_width, cam_heigh = resolution
   x_op = float(50/2) # half opening of the cam in deg
   y_op = float(40/2) # half opening of the cam in deg
-  cam_width = 320 # px
-  cam_heigh = 240 # px
 
   # face position ratio
   face_ratio_x = float(face_x) / cam_width
@@ -90,59 +61,90 @@ def get_compensation_angle(face):
 
   return (compensation_angle_x, compensation_angle_y)
 
-### Setup of camera and pan-tilt ###
+def create_video_stream(resolution):
+  # flip picture as camera is mounted upside-down
+  rotation = 180
+  # create a threaded video stream
+  vs = VideoStream(resolution=resolution, rotation=rotation).start()
+  time.sleep(1) # warmup
+  return vs
 
-camera, rawCapture = create_video_stream()
-camera_center = map(lambda x: x/2, camera.resolution) # from camera resolution
+def main():
 
-# Face detection Haar cascade file
-face_cascade = cv2.CascadeClassifier('/usr/share/opencv/haarcascades/haarcascade_frontalface_alt.xml')
+  # GPIO setup
+  GPIO.setmode(GPIO.BCM)
+  GPIO.setwarnings(False)
+  GPIO.setup(FACE_DETECTION_STATUS_PIN, GPIO.OUT)
 
-# Initial pan-tilt angles
-angle_x = 90
-angle_y = 90
-servo_x.write(angle_x)
-servo_y.write(angle_y)
+  # Serial connection setup (for the servos)
+  connection = SerialManager()
+  ArduinoApi(connection=connection)
+  servo_x = Servo(SERVO_X_ARDUINO_PIN)
+  servo_y = Servo(SERVO_Y_ARDUINO_PIN)
 
-for frame in camera.capture_continuous(rawCapture, format="bgr", use_video_port=True):
+  # Threaded Video stream setup
+  vs = create_video_stream(CAMERA_RESOLUTION)
+  camera_center = map(lambda x: x/2, CAMERA_RESOLUTION) # from camera resolution
 
-  try:
+  # Face detection Haar cascade file
+  face_cascade = cv2.CascadeClassifier('/usr/share/opencv/haarcascades/haarcascade_frontalface_alt.xml')
 
-    image = frame.array
+  # Initial pan-tilt angles
+  angle_x = 90
+  angle_y = 90
+  servo_x.write(angle_x)
+  servo_y.write(angle_y)
 
-    # Convert to grayscale
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-
-    # clear the stream in preparation for the next frame
-    rawCapture.truncate(0)
-
-    # Look for faces in the image
-    faces = face_cascade.detectMultiScale(gray, 1.5, 2)
-
-    if faces is not ():
-      # Display face detection on a led
-      GPIO.output(FACE_DETECTION_STATUS_PIN, True)
-
-      # Look for the biggest face
-      biggest_face = get_biggest_face(faces)
-
-      # Compute pan-tilt angle to adjust centring
-      ax, ay = get_compensation_angle(biggest_face)
-
-      # Update angles values
-      angle_x = angle_x + ax
-      angle_y = angle_y + ay
-      servo_x.write(angle_x)
-      servo_y.write(angle_y)
-
-    else:
-      GPIO.output(FACE_DETECTION_STATUS_PIN, False)
-
-  except Exception as e:
-    print e
-    camera.stop_recording()
+  def stop():
+    vs.stop()
     GPIO.output(FACE_DETECTION_STATUS_PIN, False)
     GPIO.cleanup()
-    connection.flush_input()
     connection.close()
+
+  def exit_handler(signum, frame):
+    stop()
+    print "\nBye!"
     sys.exit(0)
+
+  # Clean manual stop
+  signal.signal(signal.SIGINT, exit_handler)
+
+  while True:
+
+    try:
+      # grab the frame from the threaded video stream
+      frame = vs.read()
+
+      # Convert to grayscale
+      gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+      # Look for faces in the image
+      faces = face_cascade.detectMultiScale(gray, 1.5, 2)
+
+      if faces is not ():
+        # Display face detection on a led
+        GPIO.output(FACE_DETECTION_STATUS_PIN, True)
+
+        # Look for the biggest face
+        biggest_face = get_biggest_face(faces)
+
+        # Compute pan-tilt angle to adjust centring
+        ax, ay = get_compensation_angle(biggest_face, camera_center, CAMERA_RESOLUTION)
+
+        # Update angles values
+        angle_x = angle_x + ax
+        angle_y = angle_y + ay
+        servo_x.write(angle_x)
+        servo_y.write(angle_y)
+
+      else:
+        GPIO.output(FACE_DETECTION_STATUS_PIN, False)
+
+    except Exception as e:
+      print e
+      stop()
+      sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
