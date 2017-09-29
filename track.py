@@ -3,6 +3,7 @@ from nanpy import (ArduinoApi, SerialManager, Servo)
 from pivideo import VideoStream
 import RPi.GPIO as GPIO
 import signal
+import subprocess
 import sys
 import time
 
@@ -86,6 +87,18 @@ def main():
   vs = create_video_stream(CAMERA_RESOLUTION)
   camera_center = map(lambda x: x/2, CAMERA_RESOLUTION) # from camera resolution
 
+  # Player
+  cmdline = [
+    "cvlc",
+    "stream:///dev/stdin",
+    "--sout", "#standard{access=http,mux=ts,dst=:8160}",
+    "--aout", "alsa",
+    "--demux", "h264",
+    "--file-caching", "200M",
+    "-"
+  ]
+  player = subprocess.Popen(cmdline, stdin=subprocess.PIPE)
+
   # Face detection Haar cascade file
   face_cascade = cv2.CascadeClassifier('/usr/share/opencv/haarcascades/haarcascade_frontalface_alt.xml')
 
@@ -114,6 +127,9 @@ def main():
     try:
       # grab the frame from the threaded video stream
       frame = vs.read()
+
+      # add the frame to the player
+      player.stdin.write(frame.tostring())
 
       # Convert to grayscale
       gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
