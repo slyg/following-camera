@@ -66,7 +66,7 @@ def create_video_stream(resolution):
   # flip picture as camera is mounted upside-down
   rotation = 180
   # create a threaded video stream
-  vs = VideoStream(resolution=resolution, rotation=rotation).start()
+  vs = VideoStream(resolution=resolution, rotation=rotation, framerate=15).start()
   time.sleep(1) # warmup
   return vs
 
@@ -91,10 +91,14 @@ def main():
   cmdline = [
     "cvlc",
     "stream:///dev/stdin",
-    "--sout", "#standard{access=http,mux=ts,dst=:8160}",
+    "-I", "dummy",
     "--aout", "alsa",
-    "--demux", "h264",
-    "--file-caching", "200M",
+    "--demux", "rawvideo",
+    "--rawvid-fps", "15",
+    "--rawvid-width", "320",
+    "--rawvid-height", "240",
+    "--rawvid-chroma", "RV24",
+    "--sout", "#transcode{vcodec=h264,vb=200,fps=15,width=320,height=240}:std{access=http{mime=video/x-flv},mux=ffmpeg{mux=flv},dst=:8081}"
     "-"
   ]
   player = subprocess.Popen(cmdline, stdin=subprocess.PIPE)
