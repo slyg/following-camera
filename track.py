@@ -10,6 +10,9 @@ FACE_DETECTION_STATUS_PIN = 18
 SERVO_X_ARDUINO_PIN = 8
 SERVO_Y_ARDUINO_PIN = 9
 CAMERA_RESOLUTION = (320, 240)
+CAMERA_FRAMERATE = 15 # i/s
+CAMERA_ROTATION = 180 # flip picture as camera is mounted upside-down
+CAMERA_ANGLE_OF_VIEW = (50, 40) # deg
 
 def extract_area_size(face):
   x, y, w, h = face
@@ -27,7 +30,7 @@ def get_biggest_face(faces):
   _, biggest_face = biggest_face_with_area
   return biggest_face
 
-def get_compensation_angle(face, camera_center, resolution):
+def get_compensation_angle(face, camera_center, resolution, angle_of_view):
 
   x, y, w, h = face
 
@@ -38,8 +41,9 @@ def get_compensation_angle(face, camera_center, resolution):
   # Camera parameters and mappings
   x0, y0 = camera_center
   cam_width, cam_heigh = resolution
-  x_op = float(50/2) # half opening of the cam in deg
-  y_op = float(40/2) # half opening of the cam in deg
+  angle_of_view_x, angle_of_view_y = angle_of_view
+  x_op = float(angle_of_view_x/2) # half opening of the cam in deg
+  y_op = float(angle_of_view_y/2) # half opening of the cam in deg
 
   # face position ratio
   face_ratio_x = float(face_x) / cam_width
@@ -61,11 +65,9 @@ def get_compensation_angle(face, camera_center, resolution):
 
   return (compensation_angle_x, compensation_angle_y)
 
-def create_video_stream(resolution):
-  # flip picture as camera is mounted upside-down
-  rotation = 180
+def create_video_stream(resolution, framerate, rotation):
   # create a threaded video stream
-  vs = VideoStream(resolution=resolution, rotation=rotation).start()
+  vs = VideoStream(resolution=resolution, rotation=rotation, framerate=framerate).start()
   time.sleep(1) # warmup
   return vs
 
@@ -83,7 +85,7 @@ def main():
   servo_y = Servo(SERVO_Y_ARDUINO_PIN)
 
   # Threaded Video stream setup
-  vs = create_video_stream(CAMERA_RESOLUTION)
+  vs = create_video_stream(CAMERA_RESOLUTION, CAMERA_FRAMERATE, CAMERA_ROTATION)
   camera_center = map(lambda x: x/2, CAMERA_RESOLUTION) # from camera resolution
 
   # Face detection Haar cascade file
@@ -129,7 +131,7 @@ def main():
         biggest_face = get_biggest_face(faces)
 
         # Compute pan-tilt angle to adjust centring
-        ax, ay = get_compensation_angle(biggest_face, camera_center, CAMERA_RESOLUTION)
+        ax, ay = get_compensation_angle(biggest_face, camera_center, CAMERA_RESOLUTION, CAMERA_ANGLE_OF_VIEW)
 
         # Update angles values
         angle_x = angle_x + ax
