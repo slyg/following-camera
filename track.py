@@ -11,7 +11,7 @@ SERVO_X_ARDUINO_PIN = 8
 SERVO_Y_ARDUINO_PIN = 9
 CAMERA_RESOLUTION = (320, 240)
 CAMERA_FRAMERATE = 15 # i/s
-CAMERA_ROTATION = 180 # flip picture as camera is mounted upside-down
+CAMERA_ROTATION = 0
 CAMERA_ANGLE_OF_VIEW = (50, 40) # deg
 
 def extract_area_size(face):
